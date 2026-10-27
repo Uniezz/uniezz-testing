@@ -1,0 +1,81 @@
+name: Web tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web-tests/**"
+      - "test-core/**"
+      - "pom.xml"
+      - ".github/workflows/web-tests.yml"
+  pull_request:
+    paths:
+      - "web-tests/**"
+      - "test-core/**"
+      - "pom.xml"
+      - ".github/workflows/web-tests.yml"
+  schedule:
+    - cron: "0 3 * * *" # nightly regression
+  workflow_dispatch:
+    inputs:
+      env:
+        description: Target environment
+        type: choice
+        options: [dev, staging]
+        default: dev
+      tags:
+        description: JUnit tags to run (e.g. smoke). Empty = all
+        required: false
+  # Lets the frontend repo trigger this after a deploy:
+  # POST /repos/Uniezz/uniezz-testing/dispatches {"event_type":"web-tests","client_payload":{"env":"staging"}}
+  repository_dispatch:
+    types: [web-tests]
+
+concurrency:
+  group: web-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    env:
+      TEST_ENV: ${{ inputs.env || github.event.client_payload.env || 'dev' }}
+      TEST_TAGS: ${{ inputs.tags || github.event.client_payload.tags || '' }}
+      WEB_USER_PASSWORD: ${{ secrets.WEB_USER_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Build modules
+        run: mvn -B -pl web-tests -am install -DskipTests
+
+      - name: Install Playwright browser
+        run: >
+          mvn -B -pl web-tests org.codehaus.mojo:exec-maven-plugin:3.5.0:java
+          -Dexec.mainClass=com.microsoft.playwright.CLI
+          -Dexec.args="install --with-deps ${{ matrix.browser }}"
+
+      - name: Run web tests
+        run: |
+          GROUPS_ARG=""
+          if [ -n "$TEST_TAGS" ]; then GROUPS_ARG="-Dgroups=$TEST_TAGS"; fi
+          mvn -B -pl web-tests verify -Denv="$TEST_ENV" -Dweb.browser=${{ matrix.browser }} $GROUPS_ARG
+
+      - name: Upload reports and traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-test-reports-${{ matrix.browser }}
+          path: |
+            web-tests/target/surefire-reports/
+            web-tests/target/traces/

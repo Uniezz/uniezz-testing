@@ -1,0 +1,67 @@
+name: API tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "api-tests/**"
+      - "test-core/**"
+      - "pom.xml"
+      - ".github/workflows/api-tests.yml"
+  pull_request:
+    paths:
+      - "api-tests/**"
+      - "test-core/**"
+      - "pom.xml"
+      - ".github/workflows/api-tests.yml"
+  schedule:
+    - cron: "0 2 * * *" # nightly regression
+  workflow_dispatch:
+    inputs:
+      env:
+        description: Target environment
+        type: choice
+        options: [dev, staging]
+        default: dev
+      tags:
+        description: JUnit tags to run (e.g. smoke). Empty = all
+        required: false
+  # Lets the backend repo trigger this after a deploy:
+  # POST /repos/Uniezz/uniezz-testing/dispatches {"event_type":"api-tests","client_payload":{"env":"staging"}}
+  repository_dispatch:
+    types: [api-tests]
+
+concurrency:
+  group: api-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TEST_ENV: ${{ inputs.env || github.event.client_payload.env || 'dev' }}
+      TEST_TAGS: ${{ inputs.tags || github.event.client_payload.tags || '' }}
+      # Secrets are read by Config as env vars, e.g. api.token -> API_TOKEN
+      API_TOKEN: ${{ secrets.API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Run API tests
+        run: |
+          GROUPS_ARG=""
+          if [ -n "$TEST_TAGS" ]; then GROUPS_ARG="-Dgroups=$TEST_TAGS"; fi
+          mvn -B -pl api-tests -am verify -Denv="$TEST_ENV" $GROUPS_ARG
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-test-reports
+          path: api-tests/target/surefire-reports/

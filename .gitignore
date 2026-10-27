@@ -1,0 +1,21 @@
+# Build output
+target/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+
+# Local secrets / overrides
+*.local.properties
+.env
+
+# App binaries (downloaded in CI, never committed)
+mobile-tests/apps/*
+!mobile-tests/apps/.gitkeep
+
+# Logs
+*.log
